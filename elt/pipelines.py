@@ -5,8 +5,8 @@ from sqlalchemy.exc import SQLAlchemyError
 
 from config import generate_pipeline_name, generate_destination_name
 
-def create_sql_pipeline(organization: str, source: str, source_id: str, destination: str, dataset_name: str, credentials: Dict[str, Any]):
-    pipeline_name = generate_pipeline_name(organization, source, source_id)
+def create_sql_pipeline(organization: str, source: str, destination: str, dataset_name: str, credentials: Dict[str, Any]):
+    pipeline_name = generate_pipeline_name(organization, source)
     destination_name = generate_destination_name(organization, destination)
     
     @dlt.source
@@ -45,7 +45,7 @@ def create_sql_pipeline(organization: str, source: str, source_id: str, destinat
     load_info = pipeline.run(sql_source())
     return load_info
 
-def run_pipeline(organization: str, source: str, source_id: str, destination: str, dataset_name: str, credentials: Dict[str, Any]):
-    load_info = create_sql_pipeline(organization, source, source_id, destination, dataset_name, credentials)
+def run_pipeline(organization: str, source: str, destination: str, dataset_name: str, credentials: Dict[str, Any]):
+    load_info = create_sql_pipeline(organization, source, destination, dataset_name, credentials)
     print(f"Pipeline load info: {load_info}")
     return load_info
