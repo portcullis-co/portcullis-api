@@ -1,51 +1,21 @@
-import dlt
 from typing import Dict, Any
-from sqlalchemy import create_engine, text
-from sqlalchemy.exc import SQLAlchemyError
+from temporalio import activity
+import json
+from .transfer import transfer_data
 
-from config import generate_pipeline_name, generate_destination_name
-
-def create_sql_pipeline(organization: str, source: str, destination: str, dataset_name: str, credentials: Dict[str, Any]):
-    pipeline_name = generate_pipeline_name(organization, source)
-    destination_name = generate_destination_name(organization, destination)
+@activity.defn
+async def run_pipeline(organization: str, source: str, import_id: str, export_id: str, type: str, dataset_name: str, link_credentials: str, source_credentials: str, source_warehouse: str, import_warehouse: str) -> str:
+    # Parse credentials
+    link_creds = json.loads(link_credentials)
+    source_creds = json.loads(source_credentials)
     
-    @dlt.source
-    def sql_source():
-        try:
-            # Extract database connection details from credentials
-            db_type = credentials.get("db_type", "postgresql")
-            host = credentials.get("host")
-            port = credentials.get("port")
-            database = credentials.get("database")
-            username = credentials.get("username")
-            password = credentials.get("password")
-            query = credentials.get("query")
-
-            # Construct the database URL
-            db_url = f"{db_type}://{username}:{password}@{host}:{port}/{database}"
-
-            # Create a database engine
-            engine = create_engine(db_url)
-
-            # Execute the query and yield results
-            with engine.connect() as connection:
-                result = connection.execute(text(query))
-                for row in result:
-                    yield dict(row)
-
-        except SQLAlchemyError as e:
-            yield {"error": f"Database error: {str(e)}"}
-
-    pipeline = dlt.pipeline(
-        pipeline_name=pipeline_name,
-        destination=destination_name,
-        dataset_name=dataset_name
-    )
-
-    load_info = pipeline.run(sql_source())
-    return load_info
-
-def run_pipeline(organization: str, source: str, destination: str, dataset_name: str, credentials: Dict[str, Any]):
-    load_info = create_sql_pipeline(organization, source, destination, dataset_name, credentials)
-    print(f"Pipeline load info: {load_info}")
-    return load_info
+    try:
+        result = transfer_data(
+            source_type=source_warehouse,
+            source_credentials=source_creds,
+            destination_type=import_warehouse,
+            destination_credentials=link_creds
+        )
+        return f"Pipeline completed: {result}"
+    except Exception as e:
+        raise RuntimeError(f"Unexpected error in run_pipeline: {str(e)}")

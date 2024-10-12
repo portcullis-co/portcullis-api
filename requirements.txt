@@ -1,6 +1,12 @@
-dlt
 fastapi
 uvicorn
-temporalio
+temporalio==1.2.0
 sqlalchemy
 fastapi-cors
+supabase
+python-dotenv
+clickhouse-driver
+psycopg2-binary
+snowflake-connector-python
+google-cloud-bigquery
+databricks-sql-connector

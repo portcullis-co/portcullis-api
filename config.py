@@ -6,5 +6,5 @@ def generate_pipeline_name(organization, source):
 def generate_destination_name(organization, destination):
     return f"{organization}_{destination}"
 
-TEMPORAL_NAMESPACE = "portcullis"
+TEMPORAL_NAMESPACE = "default"
 TEMPORAL_SERVER_URL = os.getenv("TEMPORAL_SERVER_URL", "localhost:7233")
