@@ -12,8 +12,12 @@ class SnowflakeConnector(WarehouseConnector):
         self.cursor = self.connection.cursor(snowflake.connector.DictCursor)
 
     def execute_query(self, query, params=None):
+        if not query:
+            return None
         self.cursor.execute(query, params)
-        return self.cursor.fetchall()
+        if self.cursor.description:
+            return self.cursor.fetchall()
+        return None
 
     def get_tables(self):
         query = "SHOW TABLES"

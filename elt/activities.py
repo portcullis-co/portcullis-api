@@ -1,7 +1,8 @@
+from typing import List
 from temporalio import activity
 import json
-from .pipelines import run_pipeline as pipeline_run
-import snowflake.connector
+from .transfer import get_connector, transfer_data
+import logging
 
 @activity.defn
 async def parse_json_credentials(link_credentials: str, source_credentials: str) -> tuple:
@@ -10,15 +11,63 @@ async def parse_json_credentials(link_credentials: str, source_credentials: str)
     return link_creds, source_creds
 
 @activity.defn
-async def run_pipeline(organization: str, source: str, import_id: str, export_id: str, type: str, dataset_name: str, link_credentials: dict, source_credentials: dict, source_warehouse: str, import_warehouse: str, snowflake_result: list) -> str:
-    return await pipeline_run(organization, source, import_id, export_id, type, dataset_name, link_credentials, source_credentials, source_warehouse, import_warehouse, snowflake_result)
+async def get_tables(warehouse_type: str, connection_params: dict) -> List[str]:
+    logging.info(f"Getting tables for {warehouse_type}")
+    connector = get_connector(warehouse_type, connection_params)
+    try:
+        connector.connect()
+        tables = connector.get_tables()
+        logging.info(f"Retrieved {len(tables)} tables from {warehouse_type}")
+        return tables
+    except Exception as e:
+        logging.error(f"Error getting tables from {warehouse_type}: {str(e)}")
+        raise
+    finally:
+        connector.close()
 
 @activity.defn
-async def snowflake_query(query: str, connection_params: dict):
-    conn = snowflake.connector.connect(**connection_params)
+async def transfer_table(source_type: str, destination_type: str, table_name: str, source_params: dict, destination_params: dict) -> str:
+    source = get_connector(source_type, source_params)
+    destination = get_connector(destination_type, destination_params)
+    
+    source.connect()
+    destination.connect()
+    
     try:
-        cur = conn.cursor()
-        cur.execute(query)
-        return cur.fetchall()
+        # Get table data from source
+        data = source.get_table_data(table_name)
+        
+        if data:
+            # Create table in destination
+            schema = ', '.join([f"{k} TEXT" for k in data[0].keys()])  # Simplified schema
+            destination.create_table(table_name, schema)
+            
+            # Insert data into destination
+            destination.insert_data(table_name, data)
+            
+        return f"Transferred table: {table_name}"
+    except Exception as e:
+        logging.error(f"Error transferring table {table_name}: {str(e)}")
+        raise
     finally:
-        conn.close()
+        source.close()
+        destination.close()
+
+@activity.defn
+async def warehouse_query(warehouse_type: str, query: str, connection_params: dict):
+    if not query:
+        logging.warning(f"Empty query provided for {warehouse_type}")
+        return []
+    
+    logging.info(f"Executing query on {warehouse_type}: {query}")
+    connector = get_connector(warehouse_type, connection_params)
+    connector.connect()
+    try:
+        result = connector.execute_query(query)
+        logging.info(f"Query result: {result}")
+        return result if result is not None else []
+    except Exception as e:
+        logging.error(f"Error executing query: {str(e)}")
+        raise
+    finally:
+        connector.close()

@@ -10,7 +10,6 @@ from supabase import create_client, Client as SupabaseClient
 from dotenv import load_dotenv
 from typing import Dict, Any
 import json
-from pydantic import BaseModel
 
 # Add the current directory to the Python path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -41,6 +40,7 @@ def get_supabase_client() -> SupabaseClient:
     if not url or not key:
         raise HTTPException(status_code=500, detail="Supabase configuration is missing")
     return create_client(url, key)
+
 @router.post("/sources")
 async def create_source(request: SourceRequest):
     try:
@@ -105,9 +105,26 @@ async def run_pipeline(background_tasks: BackgroundTasks, request: PipelineReque
 
         if "error" in insert_result:
             raise HTTPException(status_code=500, detail=insert_result["error"])
+
         async def execute_workflow():
             try:
                 client = await Client.connect(TEMPORAL_SERVER_URL, namespace=TEMPORAL_NAMESPACE)
+                snowflake_connection_params = {
+                    'account': request.source_credentials.get('account'),
+                    'user': request.source_credentials.get('user'),
+                    'password': request.source_credentials.get('password'),
+                    'warehouse': request.source_credentials.get('warehouse'),
+                    'database': request.source_credentials.get('database'),
+                    'schema': request.source_credentials.get('schema'),
+                }
+                clickhouse_connection_params = {
+                    'host': request.link_credentials.get('host'),
+                    'port': request.link_credentials.get('port'),
+                    'database': request.link_credentials.get('database'),
+                    'user': request.link_credentials.get('user'),
+                    'password': request.link_credentials.get('password'),
+                }
+                connection_params = snowflake_connection_params if request.source_warehouse.lower() == 'snowflake' else clickhouse_connection_params
                 await client.execute_workflow(
                     PortcullisPipelineWorkflow.run,
                     args=[
@@ -117,8 +134,7 @@ async def run_pipeline(background_tasks: BackgroundTasks, request: PipelineReque
                         request.export_id,
                         request.type,
                         request.dataset_name,
-                        {},  # Empty dict for connection_params
-                        "",  # Empty string for query
+                        connection_params,  # Use the appropriate connection params
                         json.dumps(request.link_credentials),
                         json.dumps(request.source_credentials),
                         request.source_warehouse,
@@ -130,6 +146,7 @@ async def run_pipeline(background_tasks: BackgroundTasks, request: PipelineReque
             except Exception as e:
                 print(f"Workflow execution failed: {str(e)}")
                 # You might want to update the database or notify the user about the failure
+
         background_tasks.add_task(execute_workflow)
         return {"message": "Pipeline execution started", "pipeline_id": insert_result["id"]}
 
@@ -138,12 +155,9 @@ async def run_pipeline(background_tasks: BackgroundTasks, request: PipelineReque
         print(f"An error occurred: {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
-
 async def insert_pipeline(organization: str, source: str, import_id: str, export_id: str, type: str, dataset_name: str, import_warehouse: str, source_warehouse: str, link_credentials: dict, source_credentials: dict):
     table_name = "imports" if type == "Import" else "exports"
     id_to_use = import_id if type == "Import" else export_id
-    
-    # Interpolate the ODBC connection string with credentials
     
     data = {
         "id": id_to_use,

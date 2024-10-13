@@ -4,7 +4,7 @@ from temporalio.client import Client
 from temporalio.worker import Worker
 from temporalio.worker.workflow_sandbox import SandboxedWorkflowRunner, SandboxRestrictions
 from temporal.workflows import PortcullisPipelineWorkflow
-from elt.activities import parse_json_credentials, run_pipeline, snowflake_query
+from elt.activities import parse_json_credentials, warehouse_query, get_tables, transfer_table
 from config import TEMPORAL_SERVER_URL, TEMPORAL_NAMESPACE
 
 logging.basicConfig(level=logging.INFO)
@@ -21,7 +21,7 @@ async def run_worker():
             client,
             task_queue="portcullis-task-queue",
             workflows=[PortcullisPipelineWorkflow],
-            activities=[parse_json_credentials, run_pipeline, snowflake_query],
+            activities=[parse_json_credentials, warehouse_query, get_tables, transfer_table],
             workflow_runner=SandboxedWorkflowRunner(restrictions=custom_restrictions)
         )
         

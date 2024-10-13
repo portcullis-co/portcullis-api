@@ -3,11 +3,11 @@ from .connectors.clickhouse import ClickhouseConnector
 from .connectors.snowflake import SnowflakeConnector
 
 def get_connector(warehouse_type, credentials):
-    if warehouse_type == 'postgres':
+    if warehouse_type.lower() == 'postgres':
         return PostgresConnector(credentials)
-    elif warehouse_type == 'clickhouse':
+    elif warehouse_type.lower() == 'clickhouse':
         return ClickhouseConnector(credentials)
-    elif warehouse_type == 'snowflake':
+    elif warehouse_type.lower() == 'snowflake':
         return SnowflakeConnector(credentials)
     # Add other warehouse types here
     raise ValueError(f"Unsupported warehouse type: {warehouse_type}")
@@ -24,11 +24,8 @@ def transfer_data(source_type, source_credentials, destination_type, destination
         for table in tables:
             data = source.get_table_data(table)
             if data:
-                # Create table in destination
                 schema = ', '.join([f"{k} TEXT" for k in data[0].keys()])  # Simplified schema
                 destination.create_table(table, schema)
-                
-                # Insert data into destination
                 destination.insert_data(table, data)
 
         return f"Transferred data for {len(tables)} tables"

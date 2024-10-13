@@ -1,6 +1,6 @@
 from temporalio import workflow
-from elt.activities import parse_json_credentials, run_pipeline, snowflake_query
-from typing import Dict, Any
+from elt.activities import parse_json_credentials, warehouse_query, get_tables, transfer_table
+from typing import Dict, Any, List
 from datetime import timedelta
 
 @workflow.defn
@@ -15,7 +15,6 @@ class PortcullisPipelineWorkflow:
         type: str,
         dataset_name: str,
         connection_params: dict,
-        query: str,
         link_credentials: str,
         source_credentials: str,
         source_warehouse: str,
@@ -28,17 +27,19 @@ class PortcullisPipelineWorkflow:
             start_to_close_timeout=timedelta(seconds=10)
         )
         
-        # Execute Snowflake query in a separate activity
-        snowflake_result = await workflow.execute_activity(
-            snowflake_query,
-            args=[query, connection_params],
+        # Get all tables from the source warehouse
+        tables = await workflow.execute_activity(
+            get_tables,
+            args=[source_warehouse, connection_params],
             start_to_close_timeout=timedelta(minutes=5)
         )
         
-        # Run the pipeline with the Snowflake query results
-        return await workflow.execute_activity(
-            run_pipeline,
-            args=[organization, source, import_id, export_id, type, dataset_name, 
-                  link_creds, source_creds, source_warehouse, import_warehouse, snowflake_result],
-            start_to_close_timeout=timedelta(minutes=30)
-        )
+        # Transfer each table
+        for table in tables:
+            await workflow.execute_activity(
+                transfer_table,
+                args=[source_warehouse, import_warehouse, table, connection_params, link_creds],
+                start_to_close_timeout=timedelta(minutes=30)
+            )
+        
+        return f"Pipeline completed: Transferred {len(tables)} tables"
