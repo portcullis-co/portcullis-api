@@ -1,53 +1,103 @@
 from typing import List
 from temporalio import activity
+from supabase import create_client, Client
+import os
 import json
-from .transfer import get_connector, transfer_data
 import logging
+from dotenv import load_dotenv
+from .transfer import get_connector
+
+# Load environment variables
+load_dotenv()
+
+# Initialize Supabase client
+supabase_url = os.getenv("SUPABASE_URL")
+supabase_key = os.getenv("SUPABASE_KEY")
+
+LINK_CREDENTIAL_WAREHOUSES = ['clickhouse', 'postgres']  # Add other warehouse types that should use link_credentials
+
+if not supabase_url or not supabase_key:
+    logging.error("Supabase URL or key is missing. Please check your environment variables.")
+    supabase = None
+else:
+    try:
+        supabase: Client = create_client(supabase_url, supabase_key)
+    except Exception as e:
+        logging.error(f"Failed to initialize Supabase client: {str(e)}")
+        supabase = None
 
 @activity.defn
-async def parse_json_credentials(link_credentials: str, source_credentials: str) -> tuple:
-    link_creds = json.loads(link_credentials)
-    source_creds = json.loads(source_credentials)
-    return link_creds, source_creds
+async def get_credentials(organization: str, import_id: str) -> tuple:
+    try:
+        # Query the 'imports' table in Supabase
+        response = supabase.table("imports").select("source_credentials, link_credentials").eq("organization", organization).eq("id", import_id).execute()
+        
+        if len(response.data) == 0:
+            raise ValueError(f"No import found for organization {organization} and import_id {import_id}")
+        
+        # The credentials are already dictionaries, so we don't need to use json.loads()
+        source_credentials = response.data[0]['source_credentials']
+        import_credentials = response.data[0]['link_credentials']
+        return source_credentials, import_credentials
+    except Exception as e:
+        activity.logger.error(f"Error retrieving credentials: {str(e)}")
+        raise
 
 @activity.defn
-async def get_tables(warehouse_type: str, connection_params: dict) -> List[str]:
+async def parse_json_credentials(credentials: str) -> dict:
+    return json.loads(credentials)
+
+@activity.defn
+async def get_tables(warehouse_type: str, credentials: dict) -> List[str]:
     logging.info(f"Getting tables for {warehouse_type}")
-    connector = get_connector(warehouse_type, connection_params)
+    
+    connector = get_connector(warehouse_type, credentials)
+    
     try:
         connector.connect()
         tables = connector.get_tables()
         logging.info(f"Retrieved {len(tables)} tables from {warehouse_type}")
         return tables
     except Exception as e:
-        logging.error(f"Error getting tables from {warehouse_type}: {str(e)}")
+        logging.error(f"Error getting tables from {warehouse_type}: {str(e)}", exc_info=True)
         raise
     finally:
         connector.close()
 
 @activity.defn
-async def transfer_table(source_type: str, destination_type: str, table_name: str, source_params: dict, destination_params: dict) -> str:
-    source = get_connector(source_type, source_params)
-    destination = get_connector(destination_type, destination_params)
-    
-    source.connect()
-    destination.connect()
-    
+async def transfer_table(source_warehouse: str, import_warehouse: str, table: str, source_creds: dict, link_creds: dict) -> str:
+    logging.info(f"Transferring table {table} from {source_warehouse} to {import_warehouse}")
+
+    source = get_connector(source_warehouse, source_creds)
+    destination = get_connector(import_warehouse, link_creds)
+
     try:
-        # Get table data from source
-        data = source.get_table_data(table_name)
-        
+        source.connect()
+        destination.connect()
+
+        logging.info(f"Fetching data from {source_warehouse} table: {table}")
+        data = source.get_table_data(table)
+
         if data:
-            # Create table in destination
-            schema = ', '.join([f"{k} TEXT" for k in data[0].keys()])  # Simplified schema
-            destination.create_table(table_name, schema)
-            
-            # Insert data into destination
-            destination.insert_data(table_name, data)
-            
-        return f"Transferred table: {table_name}"
+            logging.info(f"Creating table in {import_warehouse}: {table}")
+            if isinstance(data[0], tuple):
+                # Handle tuple case
+                schema = ', '.join([f"COLUMN_{i} VARCHAR(16777216)" for i in range(len(data[0]))])
+            elif isinstance(data[0], dict):
+                # Handle dictionary case
+                schema = ', '.join([f"{k} VARCHAR(16777216)" for k in data[0].keys()])
+            else:
+                raise ValueError(f"Unexpected data type: {type(data[0])}")
+
+            destination.create_table(table, schema)
+
+            logging.info(f"Inserting data into {import_warehouse} table: {table}")
+            destination.insert_data(table, data)
+
+        return f"Transferred table {table} from {source_warehouse} to {import_warehouse} with {len(data)} rows"
+
     except Exception as e:
-        logging.error(f"Error transferring table {table_name}: {str(e)}")
+        logging.error(f"Error transferring table {table}: {str(e)}", exc_info=True)
         raise
     finally:
         source.close()

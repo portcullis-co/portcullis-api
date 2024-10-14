@@ -5,8 +5,8 @@ sqlalchemy
 fastapi-cors
 supabase
 python-dotenv
-clickhouse-driver
 psycopg2-binary
 snowflake-connector-python
 google-cloud-bigquery
 databricks-sql-connector
+clickhouse-connect

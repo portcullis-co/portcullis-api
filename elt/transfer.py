@@ -1,16 +1,23 @@
 from .connectors.postgres import PostgresConnector
 from .connectors.clickhouse import ClickhouseConnector
 from .connectors.snowflake import SnowflakeConnector
+from .connectors.base import WarehouseConnector
+import logging
 
-def get_connector(warehouse_type, credentials):
-    if warehouse_type.lower() == 'postgres':
+def get_connector(warehouse_type: str, credentials: dict) -> WarehouseConnector:
+    warehouse_type = warehouse_type.lower()
+    logging.info(f"Getting connector for {warehouse_type}")
+    logging.info(f"Credentials type: {type(credentials)}")
+    logging.info(f"Credentials keys: {credentials.keys()}")
+
+    if warehouse_type == 'postgres':
         return PostgresConnector(credentials)
-    elif warehouse_type.lower() == 'clickhouse':
+    elif warehouse_type == 'clickhouse':
         return ClickhouseConnector(credentials)
-    elif warehouse_type.lower() == 'snowflake':
+    elif warehouse_type == 'snowflake':
         return SnowflakeConnector(credentials)
-    # Add other warehouse types here
-    raise ValueError(f"Unsupported warehouse type: {warehouse_type}")
+    else:
+        raise ValueError(f"Unsupported warehouse type: {warehouse_type}")
 
 def transfer_data(source_type, source_credentials, destination_type, destination_credentials):
     source = get_connector(source_type, source_credentials)

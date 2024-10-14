@@ -1,15 +1,23 @@
 import snowflake.connector
 from .base import WarehouseConnector
+import logging
 
 class SnowflakeConnector(WarehouseConnector):
-    def __init__(self, credentials):
+    def __init__(self, credentials, is_source=True):
         self.credentials = credentials
+        self.is_source = is_source
         self.connection = None
         self.cursor = None
-
+        
     def connect(self):
+        logging.info(f"Attempting to connect to Snowflake as {'source' if self.is_source else 'destination'} with credentials: {self.credentials}")
+        if 'account' not in self.credentials:
+            raise ValueError("Snowflake account must be specified in the credentials")
         self.connection = snowflake.connector.connect(**self.credentials)
         self.cursor = self.connection.cursor(snowflake.connector.DictCursor)
+        logging.info("Successfully connected to Snowflake")
+
+    # ... (rest of the methods remain the same)
 
     def execute_query(self, query, params=None):
         if not query:
@@ -34,10 +42,19 @@ class SnowflakeConnector(WarehouseConnector):
     def insert_data(self, table_name, data):
         if not data:
             return
-        columns = list(data[0].keys())
-        placeholders = ', '.join(['%s'] * len(columns))
-        query = f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES ({placeholders})"
-        values = [tuple(row.values()) for row in data]
+        if isinstance(data[0], dict):
+            columns = list(data[0].keys())
+            placeholders = ', '.join(['%s'] * len(columns))
+            query = f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES ({placeholders})"
+            values = [tuple(row.values()) for row in data]
+        elif isinstance(data[0], tuple):
+            columns = [f"COLUMN_{i}" for i in range(len(data[0]))]
+            placeholders = ', '.join(['%s'] * len(columns))
+            query = f"INSERT INTO {table_name} ({', '.join(columns)}) VALUES ({placeholders})"
+            values = data
+        else:
+            raise ValueError(f"Unexpected data type: {type(data[0])}")
+        
         self.cursor.executemany(query, values)
         self.connection.commit()
 

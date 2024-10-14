@@ -2,7 +2,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from temporalio.client import Client
-from temporal.workflows import PortcullisPipelineWorkflow
+from temporal.workflows import PortcullisTransferWorkflow, GetSourceTablesWorkflow, TransferDataWorkflow
 from config import TEMPORAL_SERVER_URL, TEMPORAL_NAMESPACE
 import os
 import sys
@@ -22,7 +22,7 @@ class SourceRequest(BaseModel):
     type: str
     source_credentials: Dict[str, Any]
 
-class PipelineRequest(BaseModel):
+class TransferRequest(BaseModel):
     organization: str
     source: str
     import_id: str
@@ -82,15 +82,15 @@ async def insert_source(organization: str, type: str, credentials: dict):
     except Exception as e:
         return {"error": f"Error inserting source data: {str(e)}"}
 
-@router.options("/pipeline")
-async def options_pipeline():
+@router.options("/transfer")
+async def options_transfer():
     return JSONResponse(content={}, status_code=200)
 
-@router.post("/pipeline")
-async def run_pipeline(background_tasks: BackgroundTasks, request: PipelineRequest):
+@router.post("/transfer")
+async def run_transfer(background_tasks: BackgroundTasks, request: TransferRequest):
     try:
-        # First, insert the pipeline data into the database
-        insert_result = await insert_pipeline(
+        # First, insert the transfer data into the database
+        insert_result = await insert_transfer(
             request.organization,
             request.source,
             request.import_id,
@@ -109,24 +109,10 @@ async def run_pipeline(background_tasks: BackgroundTasks, request: PipelineReque
         async def execute_workflow():
             try:
                 client = await Client.connect(TEMPORAL_SERVER_URL, namespace=TEMPORAL_NAMESPACE)
-                snowflake_connection_params = {
-                    'account': request.source_credentials.get('account'),
-                    'user': request.source_credentials.get('user'),
-                    'password': request.source_credentials.get('password'),
-                    'warehouse': request.source_credentials.get('warehouse'),
-                    'database': request.source_credentials.get('database'),
-                    'schema': request.source_credentials.get('schema'),
-                }
-                clickhouse_connection_params = {
-                    'host': request.link_credentials.get('host'),
-                    'port': request.link_credentials.get('port'),
-                    'database': request.link_credentials.get('database'),
-                    'user': request.link_credentials.get('user'),
-                    'password': request.link_credentials.get('password'),
-                }
-                connection_params = snowflake_connection_params if request.source_warehouse.lower() == 'snowflake' else clickhouse_connection_params
+                
+                # Use the appropriate connection params based on the warehouse type
                 await client.execute_workflow(
-                    PortcullisPipelineWorkflow.run,
+                    PortcullisTransferWorkflow.run,
                     args=[
                         request.organization,
                         request.source,
@@ -134,28 +120,27 @@ async def run_pipeline(background_tasks: BackgroundTasks, request: PipelineReque
                         request.export_id,
                         request.type,
                         request.dataset_name,
-                        connection_params,  # Use the appropriate connection params
-                        json.dumps(request.link_credentials),
-                        json.dumps(request.source_credentials),
                         request.source_warehouse,
                         request.import_warehouse,
+                        request.link_credentials,
+                        request.source_credentials,
                     ],
                     id=f"{request.organization}_{request.source}_workflow",
-                    task_queue="portcullis-task-queue",
+                    task_queue="portcullis-task-queue"
                 )
             except Exception as e:
                 print(f"Workflow execution failed: {str(e)}")
                 # You might want to update the database or notify the user about the failure
 
         background_tasks.add_task(execute_workflow)
-        return {"message": "Pipeline execution started", "pipeline_id": insert_result["id"]}
+        return {"message": "Transfer execution started", "transfer_id": insert_result["id"]}
 
     except Exception as e:
         # Handle the exception
         print(f"An error occurred: {str(e)}")
         raise HTTPException(status_code=500, detail=f"An error occurred: {str(e)}")
 
-async def insert_pipeline(organization: str, source: str, import_id: str, export_id: str, type: str, dataset_name: str, import_warehouse: str, source_warehouse: str, link_credentials: dict, source_credentials: dict):
+async def insert_transfer(organization: str, source: str, import_id: str, export_id: str, type: str, dataset_name: str, import_warehouse: str, source_warehouse: str, link_credentials: dict, source_credentials: dict):
     table_name = "imports" if type == "Import" else "exports"
     id_to_use = import_id if type == "Import" else export_id
     
@@ -175,14 +160,14 @@ async def insert_pipeline(organization: str, source: str, import_id: str, export
         supabase = get_supabase_client()
         result = supabase.table(table_name).insert(data).execute()
         if result.data:
-            return {"message": f"Successfully inserted {type} pipeline data", "id": id_to_use}
+            return {"message": f"Successfully inserted {type} transfer data", "id": id_to_use}
         else:
-            return {"error": f"Failed to insert {type} pipeline data"}
+            return {"error": f"Failed to insert {type} transfer data"}
     except Exception as e:
-        return {"error": f"Error inserting {type} pipeline data: {str(e)}"}
+        return {"error": f"Error inserting {type} transfer data: {str(e)}"}
 
 @router.get("/status/{workflow_id}")
-async def get_pipeline_status(workflow_id: str):
+async def get_transfer_status(workflow_id: str):
     client = await Client.connect(TEMPORAL_SERVER_URL)
     workflow = await client.get_workflow_handle(workflow_id)
     status = await workflow.query("status")
