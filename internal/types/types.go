@@ -38,6 +38,11 @@ type LoadRequest struct {
 	Query    string        `json:"query"`
 }
 
+type TransferRequest struct {
+	Source      ExtractRequest `json:"source"`
+	Destination LoadRequest    `json:"destination"`
+}
+
 type NormalizedData struct {
 	Columns []string        `json:"columns"`
 	Rows    [][]interface{} `json:"rows"`
